@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C# 15 Result unions across a .NET application</title>
+<style>:root{--ink:#182b32;--muted:#52656b;--accent:#006d69;--paper:#fffdf8;--line:#d9e1db}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:18px/1.65 Georgia,serif}main{max-width:900px;margin:auto;padding:56px 30px 80px}h1,h2,h3,nav,.eyebrow,button,summary{font-family:system-ui,sans-serif}h1{font-size:clamp(32px,5vw,52px);line-height:1.12;letter-spacing:-.04em;max-width:760px}h2{font-size:25px;line-height:1.3;margin-top:42px}h3{font-size:19px}a{color:var(--accent);text-underline-offset:3px}.eyebrow{font-size:12px;letter-spacing:.15em;text-transform:uppercase;color:var(--accent)}.lede{font-size:22px;max-width:740px}nav{display:flex;gap:24px;font-size:14px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:18px}pre{background:#eaf0ec;padding:22px;overflow:auto;line-height:1.55;font-size:14px;border-radius:5px}code{font-family:ui-monospace,monospace;font-size:.85em}pre code{font-size:inherit}.note{border-left:3px solid var(--accent);padding:3px 20px;background:#f0f4ee}.flow{padding:20px;border:1px solid var(--line);font-family:system-ui,sans-serif;font-size:16px}.quiz{border-top:1px solid var(--line);padding:20px 0}.quiz button{display:block;text-align:left;padding:12px 16px;margin:10px 0;background:white;color:var(--ink);border:1px solid #a6b8b4;border-radius:5px;cursor:pointer;min-width:250px}.quiz button:focus-visible{outline:3px solid var(--accent)}.feedback{min-height:28px;color:var(--accent)}table{width:100%;border-collapse:collapse;font-size:16px}td,th{text-align:left;padding:12px;border-bottom:1px solid var(--line)}footer{margin-top:40px;font-size:15px;color:var(--muted)}@media print{body{background:white;font-size:11pt}main{padding:0;max-width:none}h1{font-size:28pt}h2{break-after:avoid}pre,.note,table{break-inside:avoid}pre{white-space:pre-wrap;font-size:9pt}button{display:none!important}nav{display:none}a{color:inherit}.quiz{break-inside:avoid}}
+main{max-width:880px}h1{margin-bottom:18px}.filename{font-weight:bold;margin-bottom:0}
+.filename+pre{margin-top:6px}pre{tab-size:4}details{margin:14px 0;border:1px solid var(--line);padding:10px 16px;border-radius:5px}
+summary{cursor:pointer;font-weight:600}nav{gap:10px 20px}table code{overflow-wrap:anywhere}
+@media screen{
+:root{color-scheme:dark;--ink:#e8edf3;--muted:#adbac9;--accent:#76e1cf;--paper:#10151d;--line:#354354}
+body{background:#10151d}pre{background:#1b2432;border:1px solid var(--line)}
+.note{background:#162a2b}a:hover{color:#a8f5e9}a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
+}
+@media(max-width:520px){main{padding:32px 16px}body{font-size:16px}pre{padding:14px}td,th{padding:7px}}
+</style>
+</head>
+<body><main>
+<nav aria-label="Lesson sections"><a href="#setup">Setup &amp; squiggles</a><a href="#domain">Domain</a><a href="#persistence">Persistence</a><a href="#application">Application</a><a href="#http">Minimal API</a><a href="#practice">Practice</a><a href="#sources">Sources</a></nav>
+<h1>C# 15 Result unions across a .NET application</h1>
+<p class="lede">Create a valid value object, save it once, and return a distinct HTTP response for each expected outcome.</p>
+<div class="flow">Minimal API → use case → domain factory → storage only on success<br>Use case outcome → HTTP response</div>
+
+<h2 id="setup">1. Get a clean build first</h2>
+<p>.NET 11 shipped on November 10, 2026. The .NET 11 SDK defaults to C# 15 for <code>net11.0</code> projects. The released <code>union</code> syntax works without preview mode. <a href="https://devblogs.microsoft.com/dotnet/announcing-dotnet-11/">Release announcement</a> · <a href="https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-15">C# 15 overview</a>.</p>
+<p>Create an empty folder. Save the five named files below directly in it. Put the endpoint statements and types in <code>Program.cs</code> in the order shown. Run these commands from that folder.</p>
+<pre><code>dotnet --version
+dotnet build UnionDemo.csproj
+dotnet run --project UnionDemo.csproj --urls http://localhost:5080</code></pre>
+<p class="filename"><code>UnionDemo.csproj</code></p><pre><code>&lt;Project Sdk=&quot;Microsoft.NET.Sdk.Web&quot;&gt;
+  &lt;PropertyGroup&gt;
+    &lt;TargetFramework&gt;net11.0&lt;/TargetFramework&gt;
+    &lt;Nullable&gt;enable&lt;/Nullable&gt;
+    &lt;ImplicitUsings&gt;enable&lt;/ImplicitUsings&gt;
+    &lt;WarningsAsErrors&gt;$(WarningsAsErrors);CS8509;CS8655;CS8846&lt;/WarningsAsErrors&gt;
+  &lt;/PropertyGroup&gt;
+&lt;/Project&gt;</code></pre>
+<table><thead><tr><th>First symptom</th><th>What to check</th></tr></thead><tbody>
+<tr><td><code>union</code> is underlined throughout the file</td><td>Run <code>dotnet --version</code> from your project folder. Use SDK 11 or newer and target <code>net11.0</code> in the project declaring the union. Check the nearest <code>global.json</code> above the working folder and any older <code>LangVersion</code> override in your project or <code>Directory.Build.props</code>.</td></tr>
+<tr><td>Case types, <code>WebApplication</code> or <code>IResult</code> are unresolved</td><td>Check that all five files exist and that the sample uses <code>Microsoft.NET.Sdk.Web</code>. In an existing solution, put web types in your API project and ensure the project references and namespaces resolve.</td></tr>
+<tr><td>CLI builds, editor still shows errors</td><td>Check that the editor’s C# tooling supports C# 15 and uses the same SDK and solution. Reload the project after changing the SDK or target.</td></tr>
+<tr><td>A switch flags <code>CS8509</code> and names a missing case</td><td>Add an explicit arm for that case. This sample promotes exhaustiveness diagnostics to build errors.</td></tr>
+</tbody></table>
+<p>Fix the first build error before investigating the rest. One parser error can cause many follow-on squiggles. Your local cause depends on the actual diagnostic. <a href="https://learn.microsoft.com/en-us/dotnet/core/versions/selection">SDK selection and global.json</a>.</p>
+
+<h2 id="domain">2. Give your value object a Result factory</h2>
+<p>A union can hold a value of any one of its declared case types. A <code>Result</code> uses that feature to represent success or failure. Here, <code>Ok&lt;T&gt;</code> and <code>Err&lt;E&gt;</code> keep the roles distinct even if both payloads share a type. Each wrapper converts implicitly to the enclosing union. <a href="https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/union">Union syntax and conversions</a>.</p>
+<p class="filename"><code>Domain.cs</code></p><pre><code>public sealed record Ok&lt;T&gt;(T Value);
+public sealed record Err&lt;E&gt;(E Error);
+public union Result&lt;T, E&gt;(Ok&lt;T&gt;, Err&lt;E&gt;);
+
+public sealed record QuantityOutOfRange(int Attempted);
+
+public sealed record Quantity
+{
+    public int Value { get; }
+    private Quantity(int value) =&gt; Value = value;
+
+    public static Result&lt;Quantity, QuantityOutOfRange&gt; Create(int value)
+    {
+        if (value is &lt; 1 or &gt; 100)
+            return new Err&lt;QuantityOutOfRange&gt;(new QuantityOutOfRange(value));
+
+        return new Ok&lt;Quantity&gt;(new Quantity(value));
+    }
+}</code></pre>
+<p>The private constructor and read-only property keep construction behind the range check. The input is already an <code>int</code> because the HTTP layer handles JSON binding. For text input you parse yourself, use <code>int.TryParse</code> and return a separate error for malformed input. <a href="https://learn.microsoft.com/en-us/dotnet/standard/exceptions/best-practices-for-exceptions">Microsoft’s guidance on Try methods</a>.</p>
+
+<h2 id="persistence">3. Return a storage outcome</h2>
+<p class="filename"><code>Persistence.cs</code></p><pre><code>using System.Collections.Concurrent;
+
+public sealed record Item(Guid Id, Quantity Quantity);
+public sealed record DuplicateItem(Guid Id);
+
+public sealed class ItemStore
+{
+    private readonly ConcurrentDictionary&lt;Guid, Item&gt; items = new();
+
+    public Result&lt;Item, DuplicateItem&gt; Add(Item item)
+    {
+        if (items.TryAdd(item.Id, item))
+            return new Ok&lt;Item&gt;(item);
+
+        return new Err&lt;DuplicateItem&gt;(new DuplicateItem(item.Id));
+    }
+
+    public bool TryGet(Guid id, out Item? item) =&gt;
+        items.TryGetValue(id, out item);
+}</code></pre>
+<p>This sample uses in-memory storage. <code>TryAdd</code> checks for a duplicate and inserts in one operation, so two requests cannot both create the same ID. Data lasts for the process lifetime.</p>
+<p>In a database adapter, let a unique constraint enforce the same rule under concurrency. If your provider reports violations as exceptions, translate the documented violation for that constraint into a conflict. A generic database exception can have several causes. Preserve meaningful distinctions such as cancellation, conflict, and an unavailable store. <a href="https://learn.microsoft.com/en-us/dotnet/standard/exceptions/best-practices-for-exceptions">Exception handling and cancellation</a>.</p>
+
+<h2 id="application">4. Give distinct failures distinct types</h2>
+<p>Milan Jovanović’s article shows a useful progression. A generic Result can replace a hand-written success flag. If every failure still uses the same error record and differs only by its string code, adding a new code leaves the union’s set of types unchanged. A separate type for each failure lets a switch report a newly missing case. Use typed errors where the caller needs to make different decisions. <a href="https://milanjovanovic.tech/blog/csharp-union-types-vs-result-pattern">Can C# 15 Union Types Replace the Result Pattern?</a></p>
+<p class="filename"><code>Application.cs</code></p><pre><code>public sealed record UnexpectedState;
+public union CreateItemError(QuantityOutOfRange, DuplicateItem, UnexpectedState);
+
+public sealed class CreateItem(ItemStore store)
+{
+    public Result&lt;Item, CreateItemError&gt; Handle(Guid id, int rawQuantity) =&gt;
+        Quantity.Create(rawQuantity) switch
+        {
+            Ok&lt;Quantity&gt; ok =&gt; Save(new Item(id, ok.Value)),
+            Err&lt;QuantityOutOfRange&gt; err =&gt; Fail(err.Error),
+            null =&gt; Fail(new UnexpectedState())
+        };
+
+    private Result&lt;Item, CreateItemError&gt; Save(Item item) =&gt;
+        store.Add(item) switch
+        {
+            Ok&lt;Item&gt; ok =&gt; ok,
+            Err&lt;DuplicateItem&gt; err =&gt; Fail(err.Error),
+            null =&gt; Fail(new UnexpectedState())
+        };
+
+    private static Result&lt;Item, CreateItemError&gt; Fail(CreateItemError error) =&gt;
+        new Err&lt;CreateItemError&gt;(error);
+}</code></pre>
+<p>Only <code>Ok&lt;Quantity&gt;</code> reaches <code>Save</code>. The use case combines the domain and storage errors into its own error vocabulary. There are two union levels. The outer switch distinguishes <code>Ok</code> and <code>Err</code>. The inner HTTP switch distinguishes the types held inside <code>Err</code>.</p>
+<div class="note"><p><strong>Handle empty contents explicitly.</strong> A generated union is a struct whose <code>default</code> value has null contents. A switch can throw if that value reaches it without a matching arm, even when the compiler accepted the other arms. Use a specific <code>null</code> arm so the compiler can still flag new case types. <a href="https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/union#union-exhaustiveness">Union exhaustiveness and null</a>.</p></div>
+
+<h2 id="http">5. Map outcomes to HTTP</h2>
+<p class="filename"><code>Program.cs</code></p><pre><code>var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSingleton&lt;ItemStore&gt;();
+builder.Services.AddSingleton&lt;CreateItem&gt;();
+
+var app = builder.Build();
+
+app.MapGet(&quot;/items/{id:guid}&quot;, IResult (Guid id, ItemStore store) =&gt;
+    store.TryGet(id, out Item? item) &amp;&amp; item is not null
+        ? Results.Ok(new ItemResponse(item.Id, item.Quantity.Value))
+        : Results.NotFound());
+
+app.MapPost(&quot;/items&quot;, IResult (CreateItemRequest request, CreateItem useCase) =&gt;
+    useCase.Handle(request.Id, request.Quantity) switch
+    {
+        Ok&lt;Item&gt; ok =&gt; Results.Created(
+            $&quot;/items/{ok.Value.Id}&quot;,
+            new ItemResponse(ok.Value.Id, ok.Value.Quantity.Value)),
+        Err&lt;CreateItemError&gt; err =&gt; ToHttpError(err.Error),
+        null =&gt; Results.Problem()
+    });
+
+app.Run();
+
+static IResult ToHttpError(CreateItemError error) =&gt; error switch
+{
+    QuantityOutOfRange invalid =&gt; Results.BadRequest(new
+    {
+        code = &quot;quantity.out_of_range&quot;,
+        attempted = invalid.Attempted
+    }),
+    DuplicateItem duplicate =&gt; Results.Conflict(new
+    {
+        code = &quot;item.duplicate&quot;,
+        id = duplicate.Id
+    }),
+    UnexpectedState =&gt; Results.Problem(),
+    null =&gt; Results.Problem()
+};
+
+public sealed record CreateItemRequest(Guid Id, int Quantity);
+public sealed record ItemResponse(Guid Id, int Quantity);</code></pre>
+<table><thead><tr><th>Outcome</th><th>POST response</th></tr></thead><tbody>
+<tr><td>Item saved</td><td>201 with a Location you can GET</td></tr>
+<tr><td>Quantity outside 1–100</td><td>400 with a stable error code</td></tr>
+<tr><td>ID already exists</td><td>409 with a stable error code</td></tr>
+<tr><td>Unexpected empty result</td><td>500 with a generic problem response</td></tr>
+</tbody></table>
+<p>Try the same ID with quantity <code>0</code>, then <code>24</code>, then <code>24</code> again. Expect 400, 201 and 409. A rejected quantity never reaches storage.</p>
+<pre><code>curl -i http://localhost:5080/items \
+  -H &#x27;Content-Type: application/json&#x27; \
+  -d &#x27;{&quot;id&quot;:&quot;00000000-0000-0000-0000-000000000001&quot;,&quot;quantity&quot;:24}&#x27;</code></pre>
+
+<h2 id="exceptions">What this guarantees about exceptions</h2>
+<p>Every modeled outcome in the sample uses an ordinary return and there are no explicit <code>throw</code> statements. A <code>Result</code> return type places no restriction on what a dependency, framework, runtime, or awaited operation can throw. Catching and translating a provider exception changes what the caller receives after the exception has occurred.</p>
+<p>Use documented nonthrowing operations for expected failures where available. Keep documented, recoverable provider exceptions at the adapter boundary and decide whether cancellation should be a canceled task or an explicit outcome. Handle and log unexpected faults at the host boundary where recovery is possible. A literal guarantee that no exception is ever thrown anywhere remains outside this design. <a href="https://learn.microsoft.com/en-us/dotnet/standard/exceptions/best-practices-for-exceptions">Microsoft’s exception guidance</a>.</p>
+
+<h2 id="practice">Practice</h2>
+<p>Predict each answer before revealing it.</p>
+<details><summary>What happens to storage when Create receives 0?</summary><p>The domain returns <code>Err&lt;QuantityOutOfRange&gt;</code>. The use case forwards the error and skips storage.</p></details>
+<details><summary>What happens if you add a case to CreateItemError?</summary><p>Add a <code>public sealed record ItemLimitReached;</code> and list it in the union. Keep <code>ToHttpError</code> unchanged and build. <code>CS8509</code> points to the missing arm. Add an arm that matches your API contract, then rebuild.</p></details>
+<details><summary>Why keep the null arm if all the case types are nonnullable?</summary><p>A generated union can be default initialized, which leaves it with null contents. An explicit arm handles that state while preserving missing-case diagnostics.</p></details>
+<p>Try applying the factory to one of your actual value objects. If your project still shows squiggles, bring the first <code>dotnet build</code> error, the affected <code>.csproj</code>, and <code>dotnet --version</code> to our next exchange.</p>
+
+<h2 id="sources">Sources</h2>
+<ul>
+<li><a href="https://milanjovanovic.tech/blog/csharp-union-types-vs-result-pattern">Milan Jovanović’s Result and union comparison</a> covers the move from shared errors to typed failures and the compiler diagnostic.</li>
+<li><a href="https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/tutorials/unions">Microsoft’s union tutorial</a> is the follow-up for generic Results, nullability, and custom unions.</li>
+<li><a href="https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/union">Microsoft’s union reference</a> covers conversions, type patterns, and default values.</li>
+<li><a href="https://learn.microsoft.com/en-us/dotnet/standard/exceptions/best-practices-for-exceptions">Microsoft’s exception guidance</a> covers Try methods, recovery, and cancellation.</li>
+</ul>
+<footer>Example built on SDK 11.0.100 with zero warnings. Domain and storage outcomes were exercised in process, and the missing-case diagnostic was reproduced. The HTTP endpoint compiled. Live requests require running the sample on a machine that allows local sockets.</footer>
+</main></body></html>
